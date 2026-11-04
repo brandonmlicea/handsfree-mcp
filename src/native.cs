@@ -43,7 +43,7 @@ public static class Hf {
 	[StructLayout(LayoutKind.Explicit)] struct UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
 	[StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public UNION u; }
 
-	public class Win { public long id; public int pid; public string app; public string title; public bool front, minimized, zoomed, full; public int x, y, width, height; }
+	public class Win { public long id; public int pid; public string app; public string title; public bool front, minimized, zoomed, full, cloaked; public string desk = ""; public int x, y, width, height; }
 
 	static Dictionary<int, string> names = new Dictionary<int, string>();
 
@@ -94,6 +94,7 @@ public static class Hf {
 			int cloaked; DwmGetWindowAttribute(h, 14, out cloaked, 4);
 			if (cloaked != 0 && !all) return true;
 			var w = Row((long)h);
+			w.cloaked = cloaked != 0;
 			if (w.pid == self || w.title == "" || w.title == "Program Manager" || w.width < 120 || w.height < 80) return true;
 			list.Add(w);
 			return true;
@@ -108,9 +109,32 @@ public static class Hf {
 		return ok();
 	}
 
+	public static void Settle(long away, long prev) {
+		var f = Front();
+		if (f != away && Here(f) && f != 0) return;
+		if (prev != 0 && prev != away && IsWindow((IntPtr)prev) && Here(prev) && Focus(prev)) return;
+		IntPtr pick = IntPtr.Zero;
+		EnumWindows((h, l) => {
+			if ((long)h == away || !IsWindowVisible(h) || IsIconic(h) || GetWindow(h, 4) != IntPtr.Zero || (GetWindowLong(h, -20) & 0x80) != 0 || Title((long)h) == "") return true;
+			int cloaked; DwmGetWindowAttribute(h, 14, out cloaked, 4);
+			if (cloaked != 0) return true;
+			pick = h; return false;
+		}, IntPtr.Zero);
+		if (pick != IntPtr.Zero) Focus((long)pick);
+	}
+
+	public static bool OnScreen(int x, int y) {
+		var s = Screen();
+		return x >= s[0] && y >= s[1] && x < s[0] + s[2] && y < s[1] + s[3];
+	}
+
+	public static bool Here(long h) {
+		try { return Desk.OnCurrent(h); } catch { return true; }
+	}
+
 	public static bool Focus(long h) {
 		var t = (IntPtr)h;
-		if (!IsWindow(t)) return false;
+		if (!IsWindow(t) || !Here(h)) return false;
 		if (IsIconic(t)) ShowWindow(t, 9);
 		if (Front() == h) return true;
 		uint none; uint held = GetWindowThreadProcessId(GetForegroundWindow(), out none);
@@ -176,7 +200,9 @@ public static class Hf {
 		return app == hint || app.Contains(hint) || (app.Length >= 3 && hint.Contains(app)) || title.Contains(hint);
 	}
 
-	public static long WaitNew(long[] before, string hint, int ms) {
+	public static long WaitNew(long[] before, string hint, int ms) { return WaitNew(before, hint, ms, false); }
+
+	public static long WaitNew(long[] before, string hint, int ms, bool fresh) {
 		long found = 0;
 		hint = hint.ToLower();
 		var end = DateTime.Now.AddMilliseconds(ms);
@@ -184,13 +210,16 @@ public static class Hf {
 			foreach (var w in Windows()) if (Array.IndexOf(before, w.id) < 0 && Matches(w, hint)) { found = w.id; break; }
 			if (found == 0) Thread.Sleep(100);
 		}
-		if (found == 0) foreach (var w in Windows(true)) if (Matches(w, hint)) { found = w.id; break; }
+		if (found == 0 && !fresh) foreach (var w in Windows(true)) if (Matches(w, hint)) { found = w.id; break; }
+		if (fresh) return found;
 		return found != 0 && Focus(found) ? found : found == 0 ? 0 : -found;
 	}
 
 	public static string Guard(long h) {
-		if (h == 0 || Front() == h) return null;
+		if (h == 0) return null;
 		if (!IsWindow((IntPtr)h)) return "The window it was working in has closed.";
+		if (Here(h) && Front() == h) return null;
+		if (!Here(h)) return "That window is on the " + Desk.Name + " desktop, so no real keys or clicks were sent. Use the use tool on its elements, or desk visit first.";
 		return Focus(h) ? null : "Another window is in front and the one it was working in would not come back, so nothing was typed.";
 	}
 

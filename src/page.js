@@ -1,4 +1,5 @@
 import { browser, pages, session } from "./browser.js";
+import { DESK, ps } from "./win.js";
 
 const SNAPSHOT = String.raw`(withText) => {
 	const pick = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=option],[role=combobox],[role=textbox],[contenteditable=""],[contenteditable=true]';
@@ -67,7 +68,7 @@ export async function read(id, withText) {
 	return `Tab ${short(t)}: ${snap.title}\n${snap.url.slice(0, 200)}\n\nElements by ref:\n${snap.rows.join("\n") || "(none)"}${snap.more ? "\n(more elements below the first 300)" : ""}${snap.text ? `\n\nText:\n${snap.text}` : ""}`;
 }
 
-export async function openTab(url, id) {
+export async function openTab(url, id, show = false) {
 	const address = /^[a-z]+:/i.test(url) ? url : `https://${url}`;
 	if (id) {
 		const t = await tab(id);
@@ -77,9 +78,15 @@ export async function openTab(url, id) {
 		return read(short(t), false);
 	}
 	const link = await browser();
+	const { product } = await link.send("Browser.getVersion");
+	const aside = process.platform === "win32" && !show && process.env.HANDSFREE_DESKTOP !== "off" && !/headless/i.test(product);
+	const before = aside ? await ps("[long[]]@([Hf]::Windows() | ForEach-Object { $_.id })") : [];
 	const { targetId } = await link.send("Target.createTarget", { url: address, newWindow: true, background: true });
+	const moved = aside ? await ps(`$b = [long[]]@(${[].concat(before ?? []).join(",") || "0"}); $w = 0; $end = (Get-Date).AddSeconds(3)
+while (-not $w -and (Get-Date) -lt $end) { $w = @([Hf]::Windows() | Where-Object { $b -notcontains $_.id -and $_.app -match '^(chrome|msedge|brave|vivaldi|thorium|opera|chromium)$' } | ForEach-Object { $_.id })[0]; if (-not $w) { Start-Sleep -Milliseconds 80 } }
+if ($w) { [void][Desk]::Ensure(); [Desk]::Send($w) }; $w`).catch(() => 0) : 0;
 	await settle(await session(targetId));
-	return read(targetId.slice(0, 6), false);
+	return `${moved ? `Opened in a window of its own on the ${DESK} desktop, off the person's screen.\n` : ""}${await read(targetId.slice(0, 6), false)}`;
 }
 
 const KEYS = { enter: [13, "Enter", "\r"], tab: [9, "Tab"], escape: [27, "Escape"], esc: [27, "Escape"], backspace: [8, "Backspace"], delete: [46, "Delete"], space: [32, " ", " "], arrowdown: [40, "ArrowDown"], down: [40, "ArrowDown"], arrowup: [38, "ArrowUp"], up: [38, "ArrowUp"], arrowleft: [37, "ArrowLeft"], left: [37, "ArrowLeft"], arrowright: [39, "ArrowRight"], right: [39, "ArrowRight"], pagedown: [34, "PageDown"], pageup: [33, "PageUp"], home: [36, "Home"], end: [35, "End"] };
@@ -103,7 +110,6 @@ async function point(send, ref) {
 
 async function click(send, ref) {
 	const { x, y } = await point(send, ref);
-	await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
 	await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
 	await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
 }

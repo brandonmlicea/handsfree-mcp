@@ -1,12 +1,27 @@
 {
 	"name": "handsfree-mcp",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Handsfree: give Claude Code access to your computer via MCP.",
 	"type": "module",
-	"bin": { "handsfree-mcp": "src/index.js" },
-	"files": ["src"],
-	"engines": { "node": ">=22.4" },
+	"bin": {
+		"handsfree-mcp": "src/index.js"
+	},
+	"files": [
+		"src"
+	],
+	"engines": {
+		"node": ">=22.4"
+	},
 	"license": "MIT",
 	"repository": "github:brandonmlicea/handsfree-mcp",
-	"keywords": ["mcp", "claude", "claude-code", "computer-use", "desktop", "browser", "windows", "cdp"]
+	"keywords": [
+		"mcp",
+		"claude",
+		"claude-code",
+		"computer-use",
+		"desktop",
+		"browser",
+		"windows",
+		"cdp"
+	]
 }

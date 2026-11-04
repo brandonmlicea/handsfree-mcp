@@ -123,6 +123,7 @@ export async function session(targetId) {
 	if (!link.sessions.has(targetId)) {
 		const { sessionId } = await link.send("Target.attachToTarget", { targetId, flatten: true });
 		link.sessions.set(targetId, sessionId);
+		await link.send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId).catch(() => undefined);
 	}
 	const sessionId = link.sessions.get(targetId);
 	return (method, params, ms) => link.send(method, params, sessionId, ms);

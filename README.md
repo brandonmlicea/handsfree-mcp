@@ -42,17 +42,28 @@ Handsfree finds the browser by itself. To use a browser started with `--remote-d
 | `do` | A plain-words request run as native steps, in about a second: "open YouTube in Chrome full screen", "snap Spotify to the right", "new tab in Brave and go to github.com", "press ctrl+shift+t" |
 | `act` | Several native steps in one call: `focus`, `launch`, `window` (full, max, min, restore, close, left, right, new), `go`, `find`, `tab`, `keys`, `type`, `wait`, `split` |
 | `elements` | A window's buttons, fields and text from its accessibility tree, numbered |
+| `use` | Act on an element with no real keyboard or mouse: press, set or type text, toggle, select, expand |
+| `desk` | Claude's own Windows desktop: `launch` an app there, `quit` it, `move` or `bring` a window, `visit` and `leave`, `status`, `close` |
 | `click` | The real mouse, on an element number or on a point in the last screenshot; `scroll` too |
 | `screenshot` | The screen or one window |
 | `tabs` | Your browser's tabs, marking the one on screen |
-| `open` | A page in a background window of your browser, so your own tab stays where it is |
+| `open` | A page in a window of its own in your browser, on Claude's desktop, so your own tab stays where it is |
 | `read` | A tab's elements by ref, and its text |
 | `browse` | Many actions in a tab in one call: `click`, `fill` (text, dropdowns, checkboxes), `type`, `press`, `scroll`, `go`, `wait` |
 | `page_screenshot`, `page_eval` | A picture of a tab; JavaScript in a tab |
 
+## Claude's own desktop
+
+On Windows, Claude's own work happens on a virtual desktop of its own, named **Claude Code** (you can see it in Task View, Win+Tab). Apps it launches with `desk launch` and pages it opens with `open` live there, so they never cover your windows or take your keyboard.
+
+Claude works those windows without your mouse or keyboard: `elements` reads them, `use` presses buttons and writes text through Windows accessibility, `screenshot` captures them off screen, and the browser tools drive its pages through the debugging connection. When an app truly needs a real mouse, `desk visit` shows that desktop and `desk leave` hands your screen back. `desk bring` moves a window over when you want to see it.
+
+It needs Windows 11 24H2 or newer. Set `HANDSFREE_DESKTOP=off` to keep new browser windows on your own desktop, or `HANDSFREE_DESKTOP_NAME` to call it something else.
+
 ## How it stays out of your way
 
 - Keys and typing go only to the window the step is working in. If another window comes to the front, it stops instead of typing into it.
+- Real keys and clicks are never sent to a window on Claude's desktop, and reading or acting on one hands the focus straight back to the window you were using.
 - Real keyboard and mouse steps wait until you have paused for about a second.
 - Browser work happens in the background through the browser's debugging connection, so it never needs your keyboard or your screen, and new pages open in a window of their own.
 - `do` understands what is open and installed: "the browser" is the one you have open, a misheard name ("crome") is the closest app, and it tells you when an app is not installed.

@@ -41,10 +41,10 @@ const front = async () => ps("[Hf]::Row([Hf]::Front())");
 
 let target = 0;
 
-async function launch(name, url) {
+async function launch(name, url, aside = false) {
 	const lowered = name.toLowerCase();
 	const exe = BROWSERS[lowered] ?? (ENGINES.has(lowered) ? lowered : null);
-	const open = exe ? (await windows()).find((row) => row.app.toLowerCase() === exe) : null;
+	const open = exe && !aside ? (await windows()).find((row) => row.app.toLowerCase() === exe) : null;
 	if (open && url) {
 		await ps(`[void][Hf]::Focus(${open.id}); $t = [Hf]::Title(${open.id}); $p = @(Get-Process -Id ([Hf]::Row(${open.id})).pid)[0].Path; Start-Process -FilePath $p -ArgumentList ${q(`"${web(url)}"`)}; [void][Hf]::WaitTitle(${open.id}, $t, 4000)`);
 		target = open.id;
@@ -71,7 +71,13 @@ else {
 		if ($app) { Start-Process ('shell:AppsFolder\\' + $app.AppID) } else { try { Run-Hf $n $null } catch { $ok = $false } }
 	}
 }
-@{ ok = $ok; window = $(if ($ok) { [Hf]::WaitNew($before, ${q(hint(name, exe))}, 9000) } else { 0 }); url = $url }`);
+@{ ok = $ok; window = $(if ($ok) { [Hf]::WaitNew($before, ${q(hint(name, exe))}, 9000, $${Boolean(aside)}) } else { 0 }); url = $url }`);
+	if (aside) {
+		if (!started.ok) throw new Error(`${name} is not installed.`);
+		if (!started.window) throw new Error(`${name} started, but no new window of it came up (an app that keeps one window, already open on the person's desktop, cannot be moved away).`);
+		await ps(`[Desk]::Send(${started.window}); Start-Sleep -Milliseconds 150; [void][Hf]::Focus(${aside})`);
+		return started.window;
+	}
 	if (!started.ok) throw new Error(`${name} is neither installed nor open.`);
 	if (!started.window) throw new Error(`${name} started, but no window of it came up.`);
 	if (started.window < 0) throw new Error(`${name} is open but would not come to the front.`);
@@ -94,7 +100,7 @@ async function go(url) {
 
 async function step(entry) {
 	if (typeof entry.focus === "number") {
-		if (!(await ps(`[Hf]::Focus(${entry.focus})`))) throw new Error("That window would not come to the front.");
+		if (!(await ps(`[Hf]::Focus(${entry.focus})`))) throw new Error((await ps(`[Hf]::Here(${entry.focus})`)) ? "That window would not come to the front." : "That window is on the agent desktop: use the use tool on its elements, or desk visit first.");
 		target = entry.focus;
 		return;
 	}
@@ -199,7 +205,7 @@ export async function snapshot(deep) {
 
 export function describe(pc) {
 	const lines = ["Open windows, the one in front first:"];
-	for (const row of pc.windows.slice(0, 40)) lines.push(`- [${row.id}] ${row.app}: ${row.title.slice(0, 90)}${row.front ? " (in front)" : ""}${row.minimized ? " (minimised)" : ""}${row.full ? " (full screen)" : ""} at ${row.x},${row.y} ${row.width}x${row.height}`);
+	for (const row of pc.windows.slice(0, 40)) lines.push(`- [${row.id}] ${row.app}: ${row.title.slice(0, 90)}${row.front ? " (in front)" : ""}${row.minimized ? " (minimised)" : ""}${row.full ? " (full screen)" : ""}${row.desk ? ` (on the ${row.desk} desktop)` : ""} at ${row.x},${row.y} ${row.width}x${row.height}`);
 	if (pc.profiles?.length) {
 		lines.push("Browser profiles:");
 		for (const p of pc.profiles) lines.push(`- ${p.browser} profile ${p.dir} "${p.name}"${p.account ? `, signed in as ${p.account}` : ""}`);
@@ -207,4 +213,9 @@ export function describe(pc) {
 	if (pc.apps?.length) lines.push(`Installed apps: ${pc.apps.slice(0, 300).join(", ")}.`);
 	lines.push(`Home folder: ${pc.home}.`);
 	return lines.join("\n");
+}
+
+export async function launchAside(name, url) {
+	const before = await front();
+	return launch(name, url, before?.id || -1);
 }
