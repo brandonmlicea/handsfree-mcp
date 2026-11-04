@@ -1,0 +1,134 @@
+#!/usr/bin/env node
+import { createInterface } from "node:readline";
+
+import { act, describe, snapshot } from "./act.js";
+import { browse, evaluate, openTab, pageShot, read, tabs } from "./page.js";
+import { actSaid, fronted, missingSaid, readAct, reflex } from "./reflex.js";
+import { elements, ps, shot, waitIdle } from "./win.js";
+
+const VERSION = "1.0.0";
+
+const INSTRUCTIONS = `Handsfree is the person's own computer: their windows, apps, keyboard, mouse and their own signed-in browser.
+- Know the PC first: pc lists the open windows with their ids, the one in front first; deep adds installed apps and browser profiles. Use an open window before launching an app.
+- Plain requests ("open YouTube in Chrome full screen", "snap Spotify to the right", "new tab in Brave and go to github.com", "press ctrl+shift+t"): call do with their words; it runs native steps in about a second. When do has no quick path, use act.
+- Fastest first: act runs a whole run of steps in one call (focus, launch, window, go, find, tab, keys, type, wait, split) and answers with the window in front as proof.
+- Desktop apps: elements (the accessibility tree, numbered) before screenshot; click by element number, or at pixels of the last screenshot. Prefer an app's own shortcuts and command palette to hunting with the mouse.
+- Web pages: tabs, open, read, browse act in the person's own browser with their sign-ins, in the background, without their keyboard or screen. For a new page, open with no tab opens a window of your own; never navigate the tab they are using unless they asked. Each browser tool answers with the page's elements by ref, so never read it again first. A whole form is one browse call: fill every field, then click submit last.
+- To act on every item in a list, click the control that names the whole action (Delete all, Mark all as read, Empty folder) rather than select-all; answer a confirm dialog already on screen first. Never one item at a time.
+- Before you buy, book, reserve or send, check the item you picked against every condition they gave on its own page: a price limit means at or below it.
+- After any action that changes something, look again before you say it worked. Never change an app's settings or config files to get something done. Save no file they did not ask for.
+- Real keyboard and mouse steps wait until the person has paused for about a second, so you never fight them.`;
+
+const text = (value) => ({ content: [{ type: "text", text: value }] });
+const image = (data, note) => ({ content: [{ type: "image", data, mimeType: "image/jpeg" }, { type: "text", text: note }] });
+
+const STEP = { type: "object", description: "One of: {focus: windowId|name}, {launch: app, url?}, {window: full|max|min|restore|close|left|right|new}, {go: address}, {find: words}, {tab: new|close|next|prev|reopen}, {keys: \"ctrl+shift+t\"}, {type: text}, {wait: \"title words\", ms?}, {split: [windowId, windowId, ...]}" };
+const TAB = { type: "string", description: "Tab id from tabs (first characters are enough). Defaults to the most recent tab." };
+
+const TOOLS = [
+	{ name: "pc", description: "The person's PC now: open windows with ids (the one in front first), and with deep true the installed apps, browser profiles and home folder.", inputSchema: { type: "object", properties: { deep: { type: "boolean" } } } },
+	{ name: "do", description: "Do a plain-words request on the PC with native steps, no planning: open, bring up, close, minimise, maximise, full screen, snap or split apps and windows; open sites and searches in a browser; tabs; press keys; type text. Answers what it did, or that it has no quick path.", inputSchema: { type: "object", properties: { said: { type: "string", description: "The request in plain words." }, before: { type: "string", description: "The previous request, for follow-ups like \"open the first result\"." } }, required: ["said"] } },
+	{ name: "act", description: "Run native steps in order on the PC in one call, each checked as it runs; answers with the window in front. Steps after focus or launch act on that window.", inputSchema: { type: "object", properties: { steps: { type: "array", items: STEP, maxItems: 12 } }, required: ["steps"] } },
+	{ name: "screenshot", description: "A picture of the whole screen, or one window. Slow: prefer elements to find what to click.", inputSchema: { type: "object", properties: { window: { type: "number", description: "Window id from pc." } } } },
+	{ name: "elements", description: "A desktop window's buttons, fields, menus and text from its accessibility tree, numbered for click. Defaults to the window in front.", inputSchema: { type: "object", properties: { window: { type: "number" } } } },
+	{ name: "click", description: "Click with the real mouse: an element number from elements, or x and y in the last screenshot's pixels. scroll moves the wheel there instead (positive is down).", inputSchema: { type: "object", properties: { element: { type: "number" }, x: { type: "number" }, y: { type: "number" }, button: { type: "string", enum: ["left", "right", "middle"] }, double: { type: "boolean" }, scroll: { type: "number" } } } },
+	{ name: "tabs", description: "Every tab of the person's own browser (Chrome, Edge, Brave and other Chromium browsers), marking the one on screen.", inputSchema: { type: "object", properties: {} } },
+	{ name: "open", description: "Open an address in the person's browser with their sign-ins. With no tab it opens a background window of your own; with tab it navigates that tab. Answers with the page's elements.", inputSchema: { type: "object", properties: { url: { type: "string" }, tab: TAB }, required: ["url"] } },
+	{ name: "read", description: "A tab's title, address and interactive elements by ref; text true adds the page's words.", inputSchema: { type: "object", properties: { tab: TAB, text: { type: "boolean" } } } },
+	{ name: "browse", description: "Run actions in a tab in one call, in the background: {click: ref}, {fill: ref, value} (text box, dropdown, checkbox true/false), {type: text}, {press: \"Enter\" | \"ctrl+a\"}, {scroll: pixels}, {go: address}, {wait: ms}. Answers what ran and the page's elements after.", inputSchema: { type: "object", properties: { tab: TAB, actions: { type: "array", items: { type: "object" }, maxItems: 40 } }, required: ["actions"] } },
+	{ name: "page_screenshot", description: "A picture of a tab.", inputSchema: { type: "object", properties: { tab: TAB } } },
+	{ name: "page_eval", description: "Run JavaScript in a tab and answer its value.", inputSchema: { type: "object", properties: { tab: TAB, js: { type: "string" } }, required: ["js"] } },
+];
+
+let lastShot = null;
+let lastElements = [];
+let apps = { at: 0, pc: null };
+
+async function knownPc() {
+	if (Date.now() - apps.at > 300000) apps = { at: Date.now(), pc: await snapshot(true) };
+	return { ...apps.pc, windows: (await snapshot(false)).windows };
+}
+
+const frontLine = (front) => (front ? `In front: [${front.id}] ${front.app}: ${front.title}` : "");
+
+const CALLS = {
+	pc: async ({ deep }) => text(describe(deep ? await knownPc() : await snapshot(false))),
+	do: async ({ said, before }) => {
+		const pc = await knownPc();
+		const plan = reflex(said, pc, before);
+		if (plan?.missing) return text(missingSaid(plan.missing, plan.open));
+		if (!plan?.steps.length) return text("No quick path for that. Use pc, act, elements, click or the browser tools.");
+		const steps = fronted(plan.steps, said, pc);
+		const result = await act(steps);
+		return text([result.ok ? actSaid(steps, result) : `Stopped: ${result.error}`, `Steps: ${JSON.stringify(steps)}`, frontLine(result.front)].join("\n"));
+	},
+	act: async ({ steps }) => {
+		const list = readAct(steps);
+		if (!list.length) throw new Error("Those steps are not valid. Each step is one of the listed shapes.");
+		const result = await act(list);
+		return text([result.ok ? `Done in ${result.ms} ms.` : `Stopped: ${result.error}`, ...result.steps.map((s) => `${s.ok ? "ok" : "failed"} ${JSON.stringify(s.step)} ${s.ms} ms`), frontLine(result.front)].join("\n"));
+	},
+	screenshot: async ({ window }) => {
+		lastShot = await shot(window);
+		return image(lastShot.data, `${lastShot.width}x${lastShot.height}. click takes x and y in this picture's pixels.`);
+	},
+	elements: async ({ window }) => {
+		lastElements = await elements(window);
+		return text(lastElements.length ? lastElements.map((e, at) => `[${at + 1}] ${e.type} "${e.name}"${e.off ? " (disabled)" : ""}`).join("\n") : "This window exposes no elements; use screenshot.");
+	},
+	click: async ({ element, x, y, button = "left", double, scroll }) => {
+		let at;
+		if (element != null) {
+			const e = lastElements[element - 1];
+			if (!e) throw new Error("No such element. Call elements first.");
+			at = [e.x, e.y];
+		} else {
+			if (x == null || y == null) throw new Error("Give an element number, or x and y.");
+			if (!lastShot) throw new Error("Take a screenshot first, so x and y have a picture to refer to.");
+			at = [Math.round(lastShot.x + x / lastShot.scale), Math.round(lastShot.y + y / lastShot.scale)];
+		}
+		await waitIdle();
+		await ps(scroll ? `[Hf]::Scroll(${at[0]}, ${at[1]}, ${Math.round(scroll)})` : `[Hf]::Click(${at[0]}, ${at[1]}, '${button}', ${double ? 2 : 1})`);
+		await new Promise((done) => setTimeout(done, 250));
+		return text(`${scroll ? "Scrolled" : "Clicked"} at ${at[0]},${at[1]}.\n${frontLine(await ps("[Hf]::Row([Hf]::Front())"))}`);
+	},
+	tabs: async () => text(await tabs(process.platform === "win32" ? await ps("[Hf]::Title([Hf]::Front())").catch(() => "") : "")),
+	open: async ({ url, tab }) => text(await openTab(url, tab)),
+	read: async ({ tab, text: words }) => text(await read(tab, words)),
+	browse: async ({ tab, actions }) => text(await browse(tab, actions)),
+	page_screenshot: async ({ tab }) => image(await pageShot(tab), "The tab as it looks now."),
+	page_eval: async ({ tab, js }) => text(await evaluate(tab, js)),
+};
+
+const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+
+async function handle(message) {
+	const { id, method, params } = message;
+	if (id === undefined) return;
+	if (method === "initialize") return write({ jsonrpc: "2.0", id, result: { protocolVersion: params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "handsfree", version: VERSION }, instructions: INSTRUCTIONS } });
+	if (method === "ping") return write({ jsonrpc: "2.0", id, result: {} });
+	if (method === "tools/list") return write({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
+	if (method === "tools/call") {
+		const call = CALLS[params?.name];
+		if (!call) return write({ jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool ${params?.name}` } });
+		try {
+			return write({ jsonrpc: "2.0", id, result: await call(params.arguments ?? {}) });
+		} catch (error) {
+			return write({ jsonrpc: "2.0", id, result: { ...text(error.message), isError: true } });
+		}
+	}
+	write({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method ${method}` } });
+}
+
+createInterface({ input: process.stdin }).on("line", (line) => {
+	if (!line.trim()) return;
+	let message;
+	try {
+		message = JSON.parse(line);
+	} catch {
+		return write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+	}
+	handle(message);
+}).on("close", () => process.exit(0));
+
+if (process.platform === "win32") ps("1").catch(() => undefined);
