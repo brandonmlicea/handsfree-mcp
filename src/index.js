@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
 
+import { clean, takesBack } from "disfluency";
+
 import { act, describe, launchAside, snapshot } from "./act.js";
 import { browse, evaluate, openTab, pageShot, read, tabs } from "./page.js";
 import { actSaid, fronted, missingSaid, readAct, reflex } from "./reflex.js";
 import { DESK, elements, list, ps, shot, use, waitIdle, windows } from "./win.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 const INSTRUCTIONS = `Handsfree is the person's own computer: their windows, apps, keyboard, mouse and their own signed-in browser.
 - Know the PC first: pc lists the open windows with their ids, the one in front first; deep adds installed apps and browser profiles. Use an open window before launching an app.
@@ -28,7 +30,7 @@ const TAB = { type: "string", description: "Tab id from tabs (first characters a
 
 const TOOLS = [
 	{ name: "pc", description: "The person's PC now: open windows with ids (the one in front first), and with deep true the installed apps, browser profiles and home folder.", inputSchema: { type: "object", properties: { deep: { type: "boolean" } } } },
-	{ name: "do", description: "Do a plain-words request on the PC with native steps, no planning: open, bring up, close, minimise, maximise, full screen, snap or split apps and windows; open sites and searches in a browser; tabs; press keys; type text. Answers what it did, or that it has no quick path.", inputSchema: { type: "object", properties: { said: { type: "string", description: "The request in plain words." }, before: { type: "string", description: "The previous request, for follow-ups like \"open the first result\"." } }, required: ["said"] } },
+	{ name: "do", description: "Do a plain-words request on the PC with native steps, no planning: open, bring up, close, minimise, maximise, full screen, snap or split apps and windows; open sites and searches in a browser; tabs; press keys; type text. A request holding a self-repair (\"open Chrome, no wait, Edge\") is cleaned to what they finally meant first. Answers what it did, or that it has no quick path.", inputSchema: { type: "object", properties: { said: { type: "string", description: "The request in plain words, as they said it." }, repaired: { type: "boolean", description: "True when said is already only what they finally meant." }, before: { type: "string", description: "The previous request, for follow-ups like \"open the first result\"." } }, required: ["said"] } },
 	{ name: "act", description: "Run native steps in order on the PC in one call, each checked as it runs; answers with the window in front. Steps after focus or launch act on that window.", inputSchema: { type: "object", properties: { steps: { type: "array", items: STEP, maxItems: 12 } }, required: ["steps"] } },
 	{ name: "screenshot", description: "A picture of the whole screen, or one window. Slow: prefer elements to find what to click.", inputSchema: { type: "object", properties: { window: { type: "number", description: "Window id from pc." } } } },
 	{ name: "elements", description: "A desktop window's buttons, fields, menus and text from its accessibility tree, numbered for click. Defaults to the window in front.", inputSchema: { type: "object", properties: { window: { type: "number" } } } },
@@ -58,14 +60,21 @@ const frontLine = (front) => (front ? `In front: [${front.id}] ${front.app}: ${f
 
 const CALLS = {
 	pc: async ({ deep }) => text(describe(deep ? await knownPc() : await snapshot(false))),
-	do: async ({ said, before }) => {
+	do: async ({ said, before, repaired }) => {
+		let words = said;
+		if (!repaired && takesBack(said)) {
+			const cleaned = await clean(said);
+			if (cleaned.outcome === "cancelled") return text("They took the request back, so nothing was done.");
+			if (cleaned.outcome !== "cleaned") return text(`"${said}" may hold a self-repair (no, wait, actually, instead, scratch that). Call do again with only what they finally meant, and repaired true.`);
+			words = cleaned.text;
+		}
 		const pc = await knownPc();
-		const plan = reflex(said, pc, before);
+		const plan = reflex(words, pc, before);
 		if (plan?.missing) return text(missingSaid(plan.missing, plan.open));
 		if (!plan?.steps.length) return text("No quick path for that. Use pc, act, elements, click or the browser tools.");
-		const steps = fronted(plan.steps, said, pc);
+		const steps = fronted(plan.steps, words, pc);
 		const result = await act(steps);
-		return text([result.ok ? actSaid(steps, result) : `Stopped: ${result.error}`, `Steps: ${JSON.stringify(steps)}`, frontLine(result.front)].join("\n"));
+		return text([words !== said ? `Heard as: ${words}` : "", result.ok ? actSaid(steps, result) : `Stopped: ${result.error}`, `Steps: ${JSON.stringify(steps)}`, frontLine(result.front)].filter(Boolean).join("\n"));
 	},
 	act: async ({ steps }) => {
 		const list = readAct(steps);

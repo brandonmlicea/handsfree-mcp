@@ -2,7 +2,7 @@
 
 Give Claude Code access to your computer via MCP.
 
-Handsfree is a local MCP server that lets Claude Code (or any MCP client) use your own PC: your windows, apps, keyboard and mouse, and your own browser with the sign-ins you already have. Nothing leaves your machine, there is no account, and it has zero dependencies.
+Handsfree is a local MCP server that lets Claude Code (or any MCP client) use your own PC: your windows, apps, keyboard and mouse, and your own browser with the sign-ins you already have. Nothing leaves your machine and there is no account. Its one dependency is [disfluency](https://github.com/brandonmlicea/disfluency), which has none.
 
 ## Install
 
@@ -39,7 +39,7 @@ Handsfree finds the browser by itself. To use a browser started with `--remote-d
 | Tool | What it does |
 | --- | --- |
 | `pc` | Open windows with ids, the one in front first; `deep` adds installed apps, browser profiles and the home folder |
-| `do` | A plain-words request run as native steps, in about a second: "open YouTube in Chrome full screen", "snap Spotify to the right", "new tab in Brave and go to github.com", "press ctrl+shift+t" |
+| `do` | A plain-words request run as native steps, in about a second: "open YouTube in Chrome full screen", "snap Spotify to the right", "new tab in Brave and go to github.com", "press ctrl+shift+t". A request with a self-repair ("open Chrome, no wait, Edge") is cleaned to what was meant first |
 | `act` | Several native steps in one call: `focus`, `launch`, `window` (full, max, min, restore, close, left, right, new), `go`, `find`, `tab`, `keys`, `type`, `wait`, `split` |
 | `elements` | A window's buttons, fields and text from its accessibility tree, numbered |
 | `use` | Act on an element with no real keyboard or mouse: press, set or type text, toggle, select, expand |
@@ -59,6 +59,10 @@ On Windows, Claude's own work happens on a virtual desktop of its own, named **C
 Claude works those windows without your mouse or keyboard: `elements` reads them, `use` presses buttons and writes text through Windows accessibility, `screenshot` captures them off screen, and the browser tools drive its pages through the debugging connection. When an app truly needs a real mouse, `desk visit` shows that desktop and `desk leave` hands your screen back. `desk bring` moves a window over when you want to see it.
 
 It needs Windows 11 24H2 or newer. Set `HANDSFREE_DESKTOP=off` to keep new browser windows on your own desktop, or `HANDSFREE_DESKTOP_NAME` to call it something else.
+
+## Self-repairs
+
+Spoken requests change their mind halfway: "open Calculator, no wait, Notepad". Before `do` acts, [disfluency](https://github.com/brandonmlicea/disfluency) removes what was taken back, so only Notepad opens, and "..., never mind" does nothing at all. With a model set (`DISFLUENCY_BASE_URL` and `DISFLUENCY_MODEL` for any OpenAI-compatible endpoint, or `DEEPINFRA_API_KEY`) it cleans the request itself; without one, `do` asks Claude to send only what was meant. Nothing is sent anywhere unless you set a model.
 
 ## How it stays out of your way
 

@@ -1,6 +1,6 @@
 {
 	"name": "handsfree-mcp",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "Handsfree: give Claude Code access to your computer via MCP.",
 	"type": "module",
 	"bin": {
@@ -23,5 +23,8 @@
 		"browser",
 		"windows",
 		"cdp"
-	]
+	],
+	"dependencies": {
+		"disfluency": "github:brandonmlicea/disfluency"
+	}
 }
